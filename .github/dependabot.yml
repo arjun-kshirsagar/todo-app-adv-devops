@@ -1,0 +1,13 @@
+# Weekly update PRs for every dependency surface: Python packages, the base
+# image and GitHub Actions. Each PR goes through the full pipeline.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

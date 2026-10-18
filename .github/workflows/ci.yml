@@ -1,0 +1,306 @@
+# CI/CD for the todo app.
+#
+#   quality -> build -> deploy-test (kind) -> release (manual approval)
+#
+# Every push builds an image tagged with the full commit SHA. The same image
+# that passed the end-to-end tests is what the release job promotes, so the
+# version running anywhere can be traced back to one commit and one run.
+name: CI/CD
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Promote this commit's image to the 'release' tag (requires approval)"
+        type: boolean
+        default: false
+
+# Least privilege by default; jobs opt in to more.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  # PR builds use the PR head commit so the tag matches the code under test.
+  GIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  # ------------------------------------------------------------------ 1. checks
+  quality:
+    name: Lint, test, static security checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.GIT_SHA }}
+          fetch-depth: 0 # full history for the secret scan
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Install pinned tools (checksum-verified)
+        run: scripts/ci/install-tools.sh helm kubeconform promtool trivy gitleaks hadolint
+
+      - name: Lint (ruff)
+        run: |
+          ruff check --output-format=github .
+          ruff format --check .
+
+      - name: Unit tests
+        run: pytest --cov=app --cov-report=term --cov-report=xml --junitxml=pytest.xml
+
+      - name: Dependency vulnerability audit (pip-audit)
+        run: pip-audit -r requirements.txt --strict
+
+      - name: Dockerfile lint (hadolint)
+        run: hadolint Dockerfile
+
+      - name: Secret scan (gitleaks, full history)
+        run: gitleaks git . --no-banner --redact --verbose
+
+      - name: Kubernetes misconfiguration scan (trivy config)
+        run: trivy config --severity HIGH,CRITICAL --exit-code 1 .
+
+      - name: Validate Helm chart, manifests and alert rules
+        run: scripts/ci/validate-chart.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: |
+            pytest.xml
+            coverage.xml
+
+  # ------------------------------------------------------------------ 2. image
+  build:
+    name: Build and scan image
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # push to GHCR (push events only)
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.GIT_SHA }}
+
+      - name: Install trivy (checksum-verified)
+        run: scripts/ci/install-tools.sh trivy
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image for testing (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE }}:${{ env.GIT_SHA }}
+          build-args: |
+            GIT_SHA=${{ env.GIT_SHA }}
+            APP_VERSION=${{ env.GIT_SHA }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.pull_request.updated_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image vulnerability scan (fail on fixable HIGH/CRITICAL)
+        run: |
+          trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            "$IMAGE:$GIT_SHA"
+          trivy image --format table --severity MEDIUM,HIGH,CRITICAL "$IMAGE:$GIT_SHA" > trivy-image.txt || true
+
+      - name: Verify image runs as non-root and reports its version
+        run: |
+          user="$(docker inspect -f '{{.Config.User}}' "$IMAGE:$GIT_SHA")"
+          echo "image user: $user"; [ "$user" = "10001:10001" ]
+          docker run --rm -e DATABASE_URL=sqlite:////tmp/t.db "$IMAGE:$GIT_SHA" \
+            python -c "from app import config; assert config.GIT_SHA == '$GIT_SHA', config.GIT_SHA; print('version OK', config.GIT_SHA)"
+
+      - name: Save image for the deploy-test job
+        run: docker save "$IMAGE:$GIT_SHA" -o image.tar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image
+          path: image.tar
+          retention-days: 3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-report
+          path: trivy-image.txt
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Multi-arch so the same tag runs on CI (amd64) and Apple-silicon laptops (arm64).
+      - name: Push multi-arch image (SHA tag, with SBOM + provenance)
+        id: push
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ env.IMAGE }}:${{ env.GIT_SHA }}
+          build-args: |
+            GIT_SHA=${{ env.GIT_SHA }}
+            APP_VERSION=${{ env.GIT_SHA }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image"
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Commit | \`$GIT_SHA\` |"
+            echo "| Image | \`$IMAGE:$GIT_SHA\` |"
+            echo "| Pushed digest | \`${{ steps.push.outputs.digest || 'not pushed (pull_request)' }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------ 3. deploy + verify
+  deploy-test:
+    name: Deploy to kind and verify
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      ENV_NAME: ci
+      CLUSTER: todo
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.GIT_SHA }}
+
+      - name: Install pinned tools (checksum-verified)
+        run: scripts/ci/install-tools.sh helm kind
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: image
+
+      - name: Create kind cluster
+        run: kind create cluster --name "$CLUSTER" --config deploy/kind/cluster.yaml --wait 180s
+
+      - name: Load the tested image into the cluster
+        run: |
+          docker load -i image.tar
+          kind load docker-image "$IMAGE:$GIT_SHA" --name "$CLUSTER"
+
+      - name: Install platform (metrics-server, kube-prometheus-stack)
+        run: SKIP_KIND=1 SKIP_GRAFANA=1 SKIP_JAEGER=1 scripts/cluster-up.sh
+
+      - name: Deploy with Helm (atomic)
+        run: scripts/deploy.sh --tag "$GIT_SHA"
+
+      - name: Helm test (in-cluster user journey)
+        run: helm test todo -n todo --logs
+
+      - name: Smoke test through the Service (NodePort)
+        run: scripts/smoke-test.sh "$GIT_SHA"
+
+      - name: NetworkPolicy enforcement
+        run: scripts/verify-netpol.sh
+
+      - name: Observability (scrape, build info, SLO rules, SLIs)
+        run: scripts/observability-check.sh "$GIT_SHA"
+
+      - name: Release control (bad release is rolled back, no user errors)
+        run: scripts/release-demo.sh
+
+      - name: Fault and recovery (database outage, alert fires and resolves)
+        run: WAIT_FOR_ALERT=1 scripts/fault-demo.sh
+
+      - name: Drift check (cluster == release == git)
+        run: scripts/drift-check.sh
+
+      - name: Collect evidence
+        if: always()
+        run: scripts/collect-evidence.sh evidence || true
+
+      - name: Debug dump on failure
+        if: failure()
+        run: |
+          kubectl get all -A -o wide || true
+          kubectl -n todo describe pods || true
+          kubectl -n todo get events --sort-by=.lastTimestamp || true
+          kubectl -n todo logs -l app.kubernetes.io/instance=todo --all-containers --tail=200 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-${{ env.GIT_SHA }}
+          path: evidence/
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Deployed and verified on kind" >> "$GITHUB_STEP_SUMMARY"
+          [ -f evidence/EVIDENCE.md ] && cat evidence/EVIDENCE.md >> "$GITHUB_STEP_SUMMARY" || true
+
+  # ------------------------------------------------------------------ 4. release (manual gate)
+  release:
+    name: Promote image (approval required)
+    needs: deploy-test
+    # Runs on merges to main, or on demand. The "production" environment is
+    # configured with required reviewers, so a human approves every promotion.
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: production
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Promote the tested image (no rebuild)
+        run: |
+          # Re-tag the exact manifest that passed deploy-test; nothing is rebuilt.
+          docker buildx imagetools create -t "$IMAGE:release" "$IMAGE:$GIT_SHA"
+          docker buildx imagetools inspect "$IMAGE:release" | head -5
+      - name: Summary
+        run: |
+          {
+            echo "### Released"
+            echo "\`$IMAGE:$GIT_SHA\` promoted to \`$IMAGE:release\` by approval."
+            echo
+            echo "Deploy it: \`scripts/deploy.sh --tag $GIT_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
