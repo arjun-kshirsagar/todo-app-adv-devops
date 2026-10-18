@@ -1,0 +1,98 @@
+# promtool unit tests for the SLO alerts (run in CI: see .github/workflows/ci.yml).
+# They prove the alert logic fires on real failure patterns and stays quiet
+# when the service is healthy, before anything is deployed.
+rule_files:
+  - /tmp/todo-rules.yaml
+evaluation_interval: 30s
+
+tests:
+  # 1. Healthy traffic: ~0.1% errors, nothing fires.
+  - interval: 30s
+    input_series:
+      - series: 'http_requests_total{job="todo",namespace="todo",route="/api/todos",method="GET",status="200"}'
+        values: '0+999x240'
+      - series: 'http_requests_total{job="todo",namespace="todo",route="/api/todos",method="GET",status="500"}'
+        values: '0+1x240'
+      - series: 'up{job="todo",namespace="todo",pod="todo-a"}'
+        values: '1x240'
+      - series: 'todo_db_up{job="todo",namespace="todo",pod="todo-a"}'
+        values: '1x240'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: TodoApiErrorBudgetFastBurn
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: TodoApiDown
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: TodoDatabaseUnreachable
+        exp_alerts: []
+
+  # 2. Half of requests fail for over an hour: fast-burn page fires.
+  - interval: 30s
+    input_series:
+      - series: 'http_requests_total{job="todo",namespace="todo",route="/api/todos",method="GET",status="200"}'
+        values: '0+10x240'
+      - series: 'http_requests_total{job="todo",namespace="todo",route="/api/todos",method="GET",status="503"}'
+        values: '0+10x240'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: TodoApiErrorBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: "Todo API is burning its error budget fast"
+              description: "50% of /api requests are failing (5xx)."
+              runbook_url: "https://github.com/arjun-kshirsagar/todo-app-adv-devops/blob/main/docs/RUNBOOK.md#todoapierrorbudgetfastburn"
+
+  # 3. Database unreachable for 2 minutes: page fires.
+  - interval: 30s
+    input_series:
+      - series: 'todo_db_up{job="todo",namespace="todo",pod="todo-a"}'
+        values: '1 1 0 0 0 0 0 0'
+      - series: 'todo_db_up{job="todo",namespace="todo",pod="todo-b"}'
+        values: '1 1 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: TodoDatabaseUnreachable
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: "Todo API pods cannot reach PostgreSQL (readiness failing)"
+              runbook_url: "https://github.com/arjun-kshirsagar/todo-app-adv-devops/blob/main/docs/RUNBOOK.md#tododatabaseunreachable"
+
+  # 4. No pod scraped: TodoApiDown fires after 2 minutes.
+  - interval: 30s
+    input_series:
+      - series: 'up{job="todo",namespace="todo",pod="todo-a"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: TodoApiDown
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: "No Todo API pod is being scraped successfully"
+              runbook_url: "https://github.com/arjun-kshirsagar/todo-app-adv-devops/blob/main/docs/RUNBOOK.md#todoapidown"
+
+  # 5. Slow responses: only ~50% under 300ms for 15 minutes.
+  - interval: 30s
+    input_series:
+      - series: 'http_request_duration_seconds_bucket{job="todo",namespace="todo",route="/api/todos",method="GET",le="0.3"}'
+        values: '0+5x60'
+      - series: 'http_request_duration_seconds_count{job="todo",namespace="todo",route="/api/todos",method="GET"}'
+        values: '0+10x60'
+      - series: 'http_requests_total{job="todo",namespace="todo",route="/api/todos",method="GET",status="200"}'
+        values: '0+10x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: TodoApiLatencySLOBreach
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+            exp_annotations:
+              summary: "Fewer than 95% of /api requests finish within 0.3s"
+              runbook_url: "https://github.com/arjun-kshirsagar/todo-app-adv-devops/blob/main/docs/RUNBOOK.md#todoapilatencyslobreach"

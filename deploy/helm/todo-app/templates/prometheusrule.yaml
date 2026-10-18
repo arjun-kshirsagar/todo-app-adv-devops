@@ -1,0 +1,104 @@
+{{- if include "todo-app.monitoringEnabled" . }}
+{{- $job := include "todo-app.fullname" . -}}
+{{- $ns := .Release.Namespace -}}
+{{- $sel := printf "job=\"%s\",namespace=\"%s\"" $job $ns -}}
+{{- $api := printf "%s,route=~\"/api/.*\"" $sel -}}
+{{- $slo := .Values.monitoring.slo -}}
+{{- $budget := subf 1.0 $slo.availabilityTarget -}}
+{{- $rb := .Values.monitoring.runbookBaseUrl -}}
+# SLIs are recorded once and reused by alerts and the dashboard.
+# Availability SLO: {{ $slo.availabilityTarget }} of /api requests are not 5xx (error budget {{ $budget }}).
+# Latency SLO: {{ $slo.latencyTarget }} of /api requests complete within {{ $slo.latencyThresholdSeconds }}s.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "todo-app.fullname" . }}-slo
+  labels:
+    {{- include "todo-app.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: todo-app.sli
+      interval: 30s
+      rules:
+        {{- range $w := list "5m" "30m" "1h" "6h" }}
+        - record: todo:api_error_ratio:rate{{ $w }}
+          expr: |
+            sum(rate(http_requests_total{ {{- $api -}},status=~"5.."}[{{ $w }}]))
+            /
+            clamp_min(sum(rate(http_requests_total{ {{- $api -}} }[{{ $w }}])), 1e-9)
+        {{- end }}
+        - record: todo:api_latency_good_ratio:rate5m
+          expr: |
+            sum(rate(http_request_duration_seconds_bucket{ {{- $api -}},le="{{ $slo.latencyThresholdSeconds }}"}[5m]))
+            /
+            clamp_min(sum(rate(http_request_duration_seconds_count{ {{- $api -}} }[5m])), 1e-9)
+        - record: todo:api_request_rate:rate5m
+          expr: sum(rate(http_requests_total{ {{- $api -}} }[5m]))
+
+    - name: todo-app.alerts
+      rules:
+        # Multi-window burn-rate alerts (Google SRE workbook). A 14.4x burn
+        # spends 2% of a 30-day budget in 1h: page. A 6x burn spends 5% in
+        # 6h: open a ticket. The short window makes the alert resolve quickly
+        # once the problem is fixed.
+        - alert: TodoApiErrorBudgetFastBurn
+          expr: |
+            todo:api_error_ratio:rate1h > (14.4 * {{ $budget }})
+            and
+            todo:api_error_ratio:rate5m > (14.4 * {{ $budget }})
+            and
+            todo:api_request_rate:rate5m > 0
+          for: 2m
+          labels:
+            severity: page
+          annotations:
+            summary: "Todo API is burning its error budget fast"
+            description: "{{`{{ $value | humanizePercentage }}`}} of /api requests are failing (5xx)."
+            runbook_url: "{{ $rb }}#todoapierrorbudgetfastburn"
+        - alert: TodoApiErrorBudgetSlowBurn
+          expr: |
+            todo:api_error_ratio:rate6h > (6 * {{ $budget }})
+            and
+            todo:api_error_ratio:rate30m > (6 * {{ $budget }})
+          for: 15m
+          labels:
+            severity: ticket
+          annotations:
+            summary: "Todo API error rate is steadily above its SLO"
+            runbook_url: "{{ $rb }}#todoapierrorbudgetslowburn"
+        - alert: TodoApiLatencySLOBreach
+          expr: |
+            todo:api_latency_good_ratio:rate5m < {{ $slo.latencyTarget }}
+            and
+            todo:api_request_rate:rate5m > 0
+          for: 10m
+          labels:
+            severity: ticket
+          annotations:
+            summary: "Fewer than {{ mulf $slo.latencyTarget 100 }}% of /api requests finish within {{ $slo.latencyThresholdSeconds }}s"
+            runbook_url: "{{ $rb }}#todoapilatencyslobreach"
+        - alert: TodoApiDown
+          expr: absent(up{ {{- $sel -}} } == 1)
+          for: 2m
+          labels:
+            severity: page
+          annotations:
+            summary: "No Todo API pod is being scraped successfully"
+            runbook_url: "{{ $rb }}#todoapidown"
+        - alert: TodoDatabaseUnreachable
+          expr: max(todo_db_up{ {{- $sel -}} }) == 0
+          for: 1m
+          labels:
+            severity: page
+          annotations:
+            summary: "Todo API pods cannot reach PostgreSQL (readiness failing)"
+            runbook_url: "{{ $rb }}#tododatabaseunreachable"
+        - alert: TodoPodRestartingOften
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="{{ $ns }}",pod=~"{{ $job }}-.*"}[15m]) > 2
+          labels:
+            severity: ticket
+          annotations:
+            summary: "{{`{{ $labels.pod }}`}} restarted more than twice in 15 minutes"
+            runbook_url: "{{ $rb }}#todopodrestartingoften"
+{{- end }}

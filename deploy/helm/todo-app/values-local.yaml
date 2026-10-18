@@ -1,0 +1,11 @@
+# Local kind cluster (scripts/cluster-up.sh + scripts/deploy.sh).
+# Only the differences from values.yaml belong here.
+service:
+  type: NodePort
+  nodePort: 30080     # mapped to 127.0.0.1:8080 on the host by deploy/kind/cluster.yaml
+autoscaling:
+  enabled: true       # metrics-server is installed by cluster-up.sh
+tracing:
+  enabled: true
+monitoring:
+  enabled: true

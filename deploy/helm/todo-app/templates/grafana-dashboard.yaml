@@ -1,0 +1,14 @@
+{{- if and (include "todo-app.monitoringEnabled" .) .Values.monitoring.dashboard.enabled }}
+# Picked up by the kube-prometheus-stack Grafana sidecar (label grafana_dashboard).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "todo-app.fullname" . }}-dashboard
+  namespace: {{ .Values.monitoring.dashboard.namespace }}
+  labels:
+    {{- include "todo-app.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  todo-app.json: |-
+    {{- .Files.Get "files/dashboard.json" | replace "__NAMESPACE__" .Release.Namespace | replace "__JOB__" (include "todo-app.fullname" .) | nindent 4 }}
+{{- end }}

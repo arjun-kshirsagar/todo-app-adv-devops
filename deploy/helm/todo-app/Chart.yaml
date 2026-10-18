@@ -1,0 +1,8 @@
+apiVersion: v2
+name: todo-app
+description: Todo list API + web UI with a PostgreSQL StatefulSet, monitoring and hardened defaults.
+type: application
+# Chart version: bump when the packaging changes.
+version: 1.0.0
+# Default app version. CI overrides the image tag with the git SHA at deploy time.
+appVersion: "1.0.0"

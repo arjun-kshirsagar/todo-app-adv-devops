@@ -1,0 +1,15 @@
+# Ephemeral kind cluster inside GitHub Actions (.github/workflows/ci.yml).
+# Image is loaded into the node with `kind load`, never pulled.
+# NodePort so tests go through the Service exactly as a user would
+# (kind publishes it on 127.0.0.1:8080 via deploy/kind/cluster.yaml).
+service:
+  type: NodePort
+  nodePort: 30080
+image:
+  pullPolicy: Never
+monitoring:
+  enabled: true
+  dashboard:
+    enabled: false
+tracing:
+  enabled: false
