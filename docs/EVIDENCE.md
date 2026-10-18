@@ -20,7 +20,7 @@ Evidence is produced by running the system, not by screenshots alone. Every clai
 | Alert logic is correct | `promtool test rules` | healthy traffic: no alerts; 50% errors: fast-burn page; DB down: page; no targets: page; slow responses: latency ticket |
 | NetworkPolicies are enforced | `verify-netpol.sh` | unrelated pod blocked from PostgreSQL; API reaches PostgreSQL; API blocked from the internet |
 | Monitoring is wired, not just declared | `observability-check.sh` | every API pod scraped; SLO rules loaded; SLIs computed from live traffic; no alerts firing when healthy |
-| No configuration drift | `drift-check.sh` | live == Helm release (server-side diff), release == chart in git |
+| No configuration drift | `drift-check.sh` | every field the release declares matches the live object; release == chart in git |
 | Secrets stay out of the repo and evidence | gitleaks; `collect-evidence.sh` | full-history scan clean; evidence lists Secret names only |
 
 ## Local capture (for the viva)

@@ -8,11 +8,9 @@ source "$(dirname "$0")/lib.sh"
 need kubectl helm
 drift=0
 
-log "1) live objects vs. last Helm release"
-# Server-side diff as Helm's field manager: shows only fields whose live value
-# differs from what the release declares.
-if helm -n "$NS" get manifest "$RELEASE" \
-    | kubectl diff --server-side --field-manager=helm --force-conflicts -f - ; then
+log "1) live objects vs. last Helm release (every declared field)"
+python3 -c 'import yaml' 2>/dev/null || fail "PyYAML is required: pip install pyyaml"
+if helm -n "$NS" get manifest "$RELEASE" | python3 "$ROOT/scripts/drift_compare.py" "$NS"; then
   ok "no manual changes in the cluster"
 else
   echo "  ^ live state differs from release $(helm -n "$NS" status "$RELEASE" -o json | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])')"

@@ -28,6 +28,10 @@ spec:
       containers:
         - name: jaeger
           image: jaegertracing/jaeger:2.20.0
+          env:
+            # Jaeger v2 binds its receivers/UI to localhost unless told otherwise.
+            - name: JAEGER_LISTEN_HOST
+              value: "0.0.0.0"
           ports:
             - { name: otlp-http, containerPort: 4318 }
             - { name: ui, containerPort: 16686 }
