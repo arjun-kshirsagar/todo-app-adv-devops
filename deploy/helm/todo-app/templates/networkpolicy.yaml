@@ -82,4 +82,37 @@ spec:
         - port: 5432
           protocol: TCP
   egress: []
+---
+# Lets the `helm test` pod (component=test) reach the API and DNS. A regular
+# resource rather than a test hook: `helm test --logs` treats every test hook
+# as a pod and fails trying to fetch logs from a NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "todo-app.fullname" . }}-test
+  labels:
+    {{- include "todo-app.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: test
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "todo-app.apiSelectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.app.port }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
 {{- end }}
