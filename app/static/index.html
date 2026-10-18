@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Todos</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 520px; margin: 48px auto; padding: 0 16px; color: #1a1a1a; }
+    h1 { font-size: 1.6rem; }
+    form { display: flex; gap: 8px; margin-bottom: 16px; }
+    input[type=text] { flex: 1; padding: 8px 10px; font-size: 1rem; border: 1px solid #ccc; border-radius: 6px; }
+    button { padding: 8px 14px; font-size: 1rem; border: 0; border-radius: 6px; background: #222; color: #fff; cursor: pointer; }
+    ul { list-style: none; padding: 0; }
+    li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #eee; }
+    li span { flex: 1; }
+    li.done span { text-decoration: line-through; color: #888; }
+    li button { background: transparent; color: #b00; font-size: 0.9rem; }
+    #error { color: #b00; }
+  </style>
+</head>
+<body>
+  <h1>Todos</h1>
+  <form id="add">
+    <input type="text" id="title" placeholder="What needs doing?" maxlength="200" required>
+    <button type="submit">Add</button>
+  </form>
+  <p id="error"></p>
+  <ul id="list"></ul>
+
+  <script>
+    const list = document.getElementById("list");
+    const err = document.getElementById("error");
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res.status === 204 ? null : res.json();
+    }
+
+    async function load() {
+      try {
+        err.textContent = "";
+        const todos = await api("/api/todos");
+        list.innerHTML = "";
+        for (const t of todos) {
+          const li = document.createElement("li");
+          if (t.done) li.className = "done";
+          const cb = document.createElement("input");
+          cb.type = "checkbox"; cb.checked = t.done;
+          cb.onchange = () => api(`/api/todos/${t.id}`, { method: "PATCH", body: JSON.stringify({ done: cb.checked }) }).then(load).catch(show);
+          const span = document.createElement("span");
+          span.textContent = t.title;
+          const del = document.createElement("button");
+          del.textContent = "Delete";
+          del.onclick = () => api(`/api/todos/${t.id}`, { method: "DELETE" }).then(load).catch(show);
+          li.append(cb, span, del);
+          list.append(li);
+        }
+      } catch (e) { show(e); }
+    }
+
+    function show(e) { err.textContent = "Error: " + e.message; }
+
+    document.getElementById("add").onsubmit = async (e) => {
+      e.preventDefault();
+      const input = document.getElementById("title");
+      try {
+        await api("/api/todos", { method: "POST", body: JSON.stringify({ title: input.value }) });
+        input.value = "";
+        load();
+      } catch (e) { show(e); }
+    };
+
+    load();
+  </script>
+</body>
+</html>
