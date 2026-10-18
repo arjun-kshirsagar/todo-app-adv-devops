@@ -96,3 +96,16 @@ tests:
             exp_annotations:
               summary: "Fewer than 95% of /api requests finish within 0.3s"
               runbook_url: "https://github.com/arjun-kshirsagar/todo-app-adv-devops/blob/main/docs/RUNBOOK.md#todoapilatencyslobreach"
+
+  # 6. No 5xx at all: the error ratio must be 0, not empty (otherwise the
+  #    availability panel shows "No data" exactly when everything is fine).
+  - interval: 30s
+    input_series:
+      - series: 'http_requests_total{job="todo",namespace="todo",route="/api/todos",method="GET",status="200"}'
+        values: '0+10x20'
+    promql_expr_test:
+      - expr: todo:api_error_ratio:rate5m
+        eval_time: 8m
+        exp_samples:
+          - labels: 'todo:api_error_ratio:rate5m'
+            value: 0

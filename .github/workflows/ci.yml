@@ -202,8 +202,14 @@ jobs:
         with:
           ref: ${{ env.GIT_SHA }}
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
       - name: Install pinned tools (checksum-verified)
-        run: scripts/ci/install-tools.sh helm kind
+        run: |
+          scripts/ci/install-tools.sh helm kind
+          pip install pyyaml==6.0.3   # used by drift-check.sh
 
       - uses: actions/download-artifact@v4
         with:

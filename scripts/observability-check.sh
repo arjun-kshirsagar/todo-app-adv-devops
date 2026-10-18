@@ -9,7 +9,9 @@ need kubectl curl python3
 EXPECTED_SHA="${1:-}"
 ensure_base_url
 start_prom_forward
-trap 'kill ${PF_PID:-0} ${PROM_PF_PID:-0} 2>/dev/null || true' EXIT
+# Only kill port-forwards we actually started (an empty PID would become
+# `kill 0`, which signals the whole process group, this script included).
+trap 'for p in ${PF_PID:-} ${PROM_PF_PID:-}; do kill "$p" 2>/dev/null || true; done' EXIT
 
 val() { python3 -c 'import json,sys;r=json.load(sys.stdin)["data"]["result"];print(r[0]["value"][1] if r else "none")'; }
 
@@ -41,12 +43,14 @@ done
 log "waiting for SLI recording rules to produce values"
 for _ in $(seq 1 30); do
   rate="$(prom_query 'todo:api_request_rate:rate5m' | val)"
-  [[ "$rate" != "none" ]] && break; sleep 5
+  [[ "$rate" != "none" && "$rate" != "0" ]] && break
+  curl -fsS -o /dev/null "$BASE_URL/api/todos" || true; sleep 5
 done
 err="$(prom_query 'todo:api_error_ratio:rate5m' | val)"
 lat="$(prom_query 'todo:api_latency_good_ratio:rate5m' | val)"
 echo "  request rate (5m): $rate req/s | error ratio (5m): $err | share < 300ms (5m): $lat"
-[[ "$rate" != "none" ]] && ok "SLIs computed from live traffic" || fail "SLIs not available"
+[[ "$rate" != "none" && "$rate" != "0" && "$err" != "none" ]] && ok "SLIs computed from live traffic" \
+  || fail "SLIs not available (rate=$rate err=$err)"
 
 firing="$(prom_query 'ALERTS{alertstate="firing",alertname=~"Todo.*"}' \
   | python3 -c 'import json,sys;print(",".join(r["metric"]["alertname"] for r in json.load(sys.stdin)["data"]["result"]) or "none")')"

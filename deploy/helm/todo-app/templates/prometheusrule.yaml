@@ -23,7 +23,9 @@ spec:
         {{- range $w := list "5m" "30m" "1h" "6h" }}
         - record: todo:api_error_ratio:rate{{ $w }}
           expr: |
-            sum(rate(http_requests_total{ {{- $api -}},status=~"5.."}[{{ $w }}]))
+            # "or vector(0)": with no 5xx at all the series does not exist;
+            # the ratio must then be 0, not empty.
+            (sum(rate(http_requests_total{ {{- $api -}},status=~"5.."}[{{ $w }}])) or vector(0))
             /
             clamp_min(sum(rate(http_requests_total{ {{- $api -}} }[{{ $w }}])), 1e-9)
         {{- end }}

@@ -40,7 +40,7 @@ ensure_base_url() {
   log "NodePort not reachable, starting port-forward to svc/$RELEASE"
   kubectl -n "$NS" port-forward "svc/$RELEASE" 8080:80 >/tmp/todo-port-forward.log 2>&1 &
   PF_PID=$!
-  trap 'kill ${PF_PID:-0} 2>/dev/null || true' EXIT
+  trap 'kill "$PF_PID" 2>/dev/null || true' EXIT
   for _ in $(seq 1 30); do
     curl -fsS -m 2 "$BASE_URL/healthz" >/dev/null 2>&1 && return
     sleep 1
