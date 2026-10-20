@@ -79,7 +79,7 @@ jobs:
       - name: Validate Helm chart, manifests and alert rules
         run: scripts/ci/validate-chart.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-reports
@@ -138,13 +138,13 @@ jobs:
       - name: Save image for the deploy-test job
         run: docker save "$IMAGE:$GIT_SHA" -o image.tar
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: image
           path: image.tar
           retention-days: 3
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: trivy-image-report
           path: trivy-image.txt
@@ -262,7 +262,7 @@ jobs:
           kubectl -n todo get events --sort-by=.lastTimestamp || true
           kubectl -n todo logs -l app.kubernetes.io/instance=todo --all-containers --tail=200 || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: evidence-${{ env.GIT_SHA }}
