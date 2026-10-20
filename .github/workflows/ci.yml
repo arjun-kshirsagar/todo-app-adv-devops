@@ -44,7 +44,7 @@ jobs:
           ref: ${{ env.GIT_SHA }}
           fetch-depth: 0 # full history for the secret scan
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           cache: pip
@@ -202,7 +202,7 @@ jobs:
         with:
           ref: ${{ env.GIT_SHA }}
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
