@@ -211,7 +211,7 @@ jobs:
           scripts/ci/install-tools.sh helm kind
           pip install pyyaml==6.0.3   # used by drift-check.sh
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: image
 
