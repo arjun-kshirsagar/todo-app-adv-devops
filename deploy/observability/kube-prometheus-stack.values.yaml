@@ -1,0 +1,68 @@
+# kube-prometheus-stack, trimmed for a laptop-sized kind cluster.
+# Installed by scripts/cluster-up.sh into the "monitoring" namespace.
+fullnameOverride: kps
+
+# Only our own SLO rules (deployed by the app chart) and kube-state-metrics.
+# The stock rule set mostly targets control-plane components kind does not expose.
+defaultRules:
+  create: false
+
+kubeEtcd: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+nodeExporter: { enabled: false }
+
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30090
+  prometheusSpec:
+    # Discover ServiceMonitors / PrometheusRules in every namespace without
+    # requiring a release-specific label.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    scrapeInterval: 15s
+    evaluationInterval: 30s
+    retention: 2d
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 1Gi }
+
+alertmanager:
+  service:
+    type: NodePort
+    nodePort: 30093
+  alertmanagerSpec:
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
+
+grafana:
+  service:
+    type: NodePort
+    nodePort: 30300
+  admin:
+    # Created by cluster-up.sh with a random password; never in the repo.
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 256Mi }
+
+kube-state-metrics:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+prometheusOperator:
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 256Mi }

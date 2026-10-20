@@ -1,0 +1,118 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default deny for every pod of this release; the policies below open only
+# the paths the application actually needs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "todo-app.fullname" . }}-default-deny
+  labels:
+    {{- include "todo-app.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: ["Ingress", "Egress"]
+---
+# API: accepts HTTP on its container port from anywhere (it is the public
+# entry point: NodePort traffic, Prometheus scrapes, helm test). Can only
+# talk to DNS, PostgreSQL and (optionally) the tracing collector.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "todo-app.fullname" . }}-api
+  labels:
+    {{- include "todo-app.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "todo-app.apiSelectorLabels" . | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - ports:
+        - port: http
+          protocol: TCP
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "todo-app.postgresSelectorLabels" . | nindent 14 }}
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- if .Values.tracing.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.tracingNamespace }}
+      ports:
+        - port: 4318
+          protocol: TCP
+    {{- end }}
+---
+# PostgreSQL: reachable only from this release's API pods; no egress at all.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "todo-app.fullname" . }}-postgres
+  labels:
+    {{- include "todo-app.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "todo-app.postgresSelectorLabels" . | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "todo-app.apiSelectorLabels" . | nindent 14 }}
+      ports:
+        - port: 5432
+          protocol: TCP
+  egress: []
+---
+# Lets the `helm test` pod (component=test) reach the API and DNS. A regular
+# resource rather than a test hook: `helm test --logs` treats every test hook
+# as a pod and fails trying to fetch logs from a NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "todo-app.fullname" . }}-test
+  labels:
+    {{- include "todo-app.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: test
+  policyTypes: ["Ingress", "Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "todo-app.apiSelectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.app.port }}
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}

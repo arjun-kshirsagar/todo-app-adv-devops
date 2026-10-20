@@ -1,0 +1,15 @@
+Todo app {{ include "todo-app.imageTag" . }} deployed as release "{{ .Release.Name }}" (revision {{ .Release.Revision }}).
+
+Check the rollout:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "todo-app.fullname" . }}
+
+Confirm which build is serving:
+{{- if eq .Values.service.type "NodePort" }}
+  curl -s http://127.0.0.1:8080/version
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "todo-app.fullname" . }} 8080:{{ .Values.service.port }}
+  curl -s http://127.0.0.1:8080/version
+{{- end }}
+
+Run the in-cluster user journey test:
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}

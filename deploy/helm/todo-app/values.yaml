@@ -1,0 +1,165 @@
+# Default values. These are the "production-like" defaults; environment
+# differences live in small override files (values-local.yaml, values-ci.yaml)
+# instead of copied manifests, so there is one source of truth.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/arjun-kshirsagar/todo-app-adv-devops
+  # Always deploy an immutable git-SHA tag (set by CI / deploy script).
+  # Empty falls back to .Chart.AppVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+replicaCount: 2
+
+app:
+  logLevel: INFO
+  port: 8000
+
+# Rolling update that never drops below the desired replica count: a new pod
+# must pass readiness before an old one is removed.
+strategy:
+  maxSurge: 1
+  maxUnavailable: 0
+minReadySeconds: 5
+progressDeadlineSeconds: 180
+revisionHistoryLimit: 5
+terminationGracePeriodSeconds: 30
+# Seconds to keep serving after SIGTERM is scheduled, so endpoints and
+# kube-proxy stop routing to the pod before it exits.
+preStopSleepSeconds: 5
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+probes:
+  startup:
+    periodSeconds: 5
+    failureThreshold: 30      # up to 150s for first DB connection + schema
+  liveness:
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 2
+
+service:
+  type: ClusterIP
+  port: 80
+  # Only used when type is NodePort.
+  nodePort: null
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+serviceAccount:
+  create: true
+  name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  privileged: false
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ------------------------------------------------------------------ database
+database:
+  name: todos
+  # Leave empty to use the in-chart PostgreSQL. Set (with postgres.enabled=false)
+  # to point at a managed database instead.
+  host: ""
+  # Credentials are NOT created by this chart, so they never appear in values
+  # files, the repo, or Helm's release history. Create the Secret first
+  # (scripts/deploy.sh does this) with keys: username, password.
+  existingSecret: todo-db-credentials
+
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "17.11-alpine"
+    pullPolicy: IfNotPresent
+  storage:
+    size: 1Gi
+    storageClassName: ""   # cluster default (kind: local-path "standard")
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  # postgres:*-alpine runs as uid/gid 70.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 70
+    runAsGroup: 70
+    fsGroup: 70
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    privileged: false
+    capabilities:
+      drop: ["ALL"]
+
+# ------------------------------------------------------------------ network
+networkPolicy:
+  enabled: true
+  # Namespace of the OpenTelemetry/Jaeger collector the app may send traces to.
+  tracingNamespace: observability
+
+# ------------------------------------------------------------------ observability
+tracing:
+  enabled: false
+  # OTLP/HTTP endpoint (Jaeger v2 accepts OTLP natively).
+  endpoint: http://jaeger.observability.svc.cluster.local:4318
+
+monitoring:
+  # Requires the Prometheus Operator CRDs (kube-prometheus-stack). Templates
+  # are also skipped automatically if the CRDs are not installed.
+  enabled: false
+  scrapeInterval: 15s
+  dashboard:
+    enabled: true
+    # Namespace where Grafana's sidecar looks for dashboards.
+    namespace: monitoring
+  slo:
+    # Availability: share of /api requests that are not 5xx.
+    availabilityTarget: 0.995
+    # Latency: share of /api requests served within latencyThresholdSeconds.
+    latencyTarget: 0.95
+    latencyThresholdSeconds: 0.3
+  runbookBaseUrl: https://github.com/arjun-kshirsagar/todo-app-adv-devops/blob/main/docs/RUNBOOK.md

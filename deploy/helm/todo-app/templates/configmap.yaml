@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "todo-app.fullname" . }}-config
+  labels:
+    {{- include "todo-app.labels" . | nindent 4 }}
+data:
+  LOG_LEVEL: {{ .Values.app.logLevel | quote }}
+  DB_HOST: {{ default (include "todo-app.postgresName" .) .Values.database.host | quote }}
+  DB_PORT: "5432"
+  DB_NAME: {{ .Values.database.name | quote }}
+  {{- if .Values.tracing.enabled }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.tracing.endpoint | quote }}
+  OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+  OTEL_SERVICE_NAME: {{ include "todo-app.fullname" . | quote }}
+  {{- end }}

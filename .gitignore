@@ -5,3 +5,10 @@ venv/
 *.db
 .env
 .pytest_cache/
+.coverage
+coverage.xml
+pytest.xml
+.ruff_cache/
+# Local evidence bundles (CI uploads them as run artifacts instead)
+evidence/
+image.tar
