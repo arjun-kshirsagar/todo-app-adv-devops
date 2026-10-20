@@ -110,7 +110,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Build image for testing (linux/amd64)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           load: true
@@ -161,7 +161,7 @@ jobs:
       - name: Push multi-arch image (SHA tag, with SBOM + provenance)
         id: push
         if: github.event_name == 'push'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
