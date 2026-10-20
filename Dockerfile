@@ -4,7 +4,7 @@
 # Installs dependencies into a virtualenv. Nothing from this stage except the
 # venv reaches the final image (no compilers, caches or build metadata).
 # Same base image in both stages so the venv's interpreter matches at runtime.
-FROM python:3.13-slim-trixie AS build
+FROM python:3.15-slim-trixie AS build
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt \
     && pip uninstall -y pip
 
 # ---------------------------------------------------------------- runtime stage
-FROM python:3.13-slim-trixie AS runtime
+FROM python:3.15-slim-trixie AS runtime
 
 # Build metadata, passed by CI. Baked into the image so the running container
 # can report exactly which commit it was built from (/version endpoint).
