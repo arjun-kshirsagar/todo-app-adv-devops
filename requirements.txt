@@ -1,6 +1,6 @@
 # Runtime dependencies (pinned; Dependabot proposes upgrades).
 fastapi==0.143.5
-starlette==1.8.0
+starlette==1.9.0
 uvicorn[standard]==0.54.0
 sqlalchemy==2.0.55  # 2.0.x: OpenTelemetry SQLAlchemy instrumentation does not support 2.1 yet
 psycopg[binary]==3.3.6
